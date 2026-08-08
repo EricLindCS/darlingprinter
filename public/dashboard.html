@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CTP500 — Dashboard</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <h1>CTP500 Printer</h1>
+  <button class="ghost" onclick="logout()">Log out</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Devices</h2>
+    <div id="deviceList">Loading...</div>
+    <div class="row">
+      <input type="text" id="newDeviceId" placeholder="Device ID (e.g. xiao-c6-01)">
+      <input type="text" id="newDeviceName" placeholder="Name (optional)">
+      <button onclick="addDevice()">Add device</button>
+    </div>
+    <div id="newKeyBox" class="warn" style="display:none"></div>
+  </section>
+
+  <section class="card">
+    <h2>New print job</h2>
+    <label>Device</label>
+    <select id="jobDevice"></select>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="text" onclick="switchTab('text')">Text</button>
+      <button class="tab" data-tab="image" onclick="switchTab('image')">Image</button>
+    </div>
+
+    <div id="tab-text" class="tab-panel">
+      <textarea id="textInput" rows="4" placeholder="Type something..."></textarea>
+      <label>Font size</label>
+      <input type="range" id="fontSize" min="12" max="48" value="28">
+    </div>
+
+    <div id="tab-image" class="tab-panel" style="display:none">
+      <input type="file" id="imgFile" accept="image/*">
+    </div>
+
+    <canvas id="canvas" width="384" height="80"></canvas>
+    <button onclick="submitCurrentJob()">Send to printer</button>
+    <p id="jobResult"></p>
+  </section>
+
+  <section class="card">
+    <h2>Job queue &amp; history</h2>
+    <table id="jobsTable">
+      <thead><tr><th>ID</th><th>Device</th><th>Status</th><th>Size</th><th>Created</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="app.js"></script>
+<script>
+requireAuth();
+
+let devices = [];
+let currentTab = 'text';
+
+function switchTab(tab){
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('tab-text').style.display = tab === 'text' ? 'block' : 'none';
+  document.getElementById('tab-image').style.display = tab === 'image' ? 'block' : 'none';
+}
+
+async function loadDevices(){
+  const r = await fetch('/api/devices');
+  devices = await r.json();
+  const list = document.getElementById('deviceList');
+  list.innerHTML = devices.length
+    ? devices.map(d => `<div class="device-row">${d.name} <code>${d.id}</code> <button class="ghost danger" onclick="removeDevice('${d.id}')">Remove</button></div>`).join('')
+    : '<p class="muted">No devices yet - add one below.</p>';
+
+  const sel = document.getElementById('jobDevice');
+  sel.innerHTML = devices.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+}
+
+async function addDevice(){
+  const id = document.getElementById('newDeviceId').value.trim();
+  const name = document.getElementById('newDeviceName').value.trim();
+  if (!id) { alert('Device ID required'); return; }
+  const r = await fetch('/api/devices', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ id, name })
+  });
+  const j = await r.json();
+  if (j.error) { alert(j.error); return; }
+  const box = document.getElementById('newKeyBox');
+  box.style.display = 'block';
+  box.innerHTML = `<strong>Save this API key now — it won't be shown again:</strong><br><code>${j.apiKey}</code>`;
+  document.getElementById('newDeviceId').value = '';
+  document.getElementById('newDeviceName').value = '';
+  loadDevices();
+}
+
+async function removeDevice(id){
+  if (!confirm('Remove device ' + id + ' and its job history?')) return;
+  await fetch('/api/devices/' + encodeURIComponent(id), { method: 'DELETE' });
+  loadDevices();
+}
+
+function buildCanvas(){
+  if (currentTab === 'text') {
+    const text = document.getElementById('textInput').value;
+    const fontSize = parseInt(document.getElementById('fontSize').value, 10);
+    return Promise.resolve(renderTextToCanvas(text, fontSize));
+  }
+  const file = document.getElementById('imgFile').files[0];
+  if (!file) return Promise.reject(new Error('Pick an image first'));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const h = Math.max(1, Math.round(img.height * (PW / img.width)));
+        const canvas = document.createElement('canvas');
+        canvas.width = PW; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white'; ctx.fillRect(0, 0, PW, h);
+        ctx.drawImage(img, 0, 0, PW, h);
+        resolve(canvas);
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function submitCurrentJob(){
+  const deviceId = document.getElementById('jobDevice').value;
+  if (!deviceId) { alert('Add a device first'); return; }
+  const resultEl = document.getElementById('jobResult');
+  try {
+    const canvas = await buildCanvas();
+    const preview = document.getElementById('canvas');
+    preview.width = canvas.width; preview.height = canvas.height;
+    preview.getContext('2d').drawImage(canvas, 0, 0);
+
+    const jobId = await submitJob(deviceId, canvas);
+    resultEl.textContent = 'Queued as job #' + jobId;
+    resultEl.className = '';
+    loadJobs();
+  } catch (e) {
+    resultEl.textContent = 'Failed: ' + e.message;
+    resultEl.className = 'error';
+  }
+}
+
+async function loadJobs(){
+  const r = await fetch('/api/jobs');
+  const jobs = await r.json();
+  const tbody = document.querySelector('#jobsTable tbody');
+  tbody.innerHTML = jobs.map(j => `
+    <tr>
+      <td>${j.id}</td>
+      <td>${j.device_id}</td>
+      <td class="status-${j.status}">${j.status}${j.error ? ' — ' + j.error : ''}</td>
+      <td>${j.width}×${j.height}</td>
+      <td>${new Date(j.created_at).toLocaleString()}</td>
+      <td>${j.status === 'queued' ? `<button class="ghost danger" onclick="cancelJob(${j.id})">Cancel</button>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+async function cancelJob(id){
+  await fetch('/api/jobs/' + id, { method: 'DELETE' });
+  loadJobs();
+}
+
+async function logout(){
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login.html';
+}
+
+loadDevices();
+loadJobs();
+setInterval(loadJobs, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CTP500 — Login</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="centered">
+<section class="card" style="max-width:360px">
+  <h1>CTP500 Printer</h1>
+  <input type="password" id="password" placeholder="Password" onkeydown="if(event.key==='Enter')login()">
+  <button onclick="login()">Log in</button>
+  <p id="err" class="error"></p>
+</section>
+<script>
+async function login(){
+  const password = document.getElementById('password').value;
+  const r = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ password })
+  });
+  const j = await r.json();
+  if (j.ok) window.location.href = '/dashboard.html';
+  else document.getElementById('err').textContent = j.error || 'login failed';
+}
+</script>
+</body>
+</html>
