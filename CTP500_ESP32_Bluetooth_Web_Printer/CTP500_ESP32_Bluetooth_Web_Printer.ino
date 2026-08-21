@@ -61,16 +61,31 @@ struct Config {
 
 void loadConfig() {
   prefs.begin("ctp500", true);
-  cfg.ssid       = prefs.getString("ssid", "SkyNet-2G");
-  cfg.pass       = prefs.getString("pass", "gooddance791");
-  cfg.apiBase    = prefs.getString("apiBase", "http://192.168.1.152");
+  cfg.ssid       = prefs.getString("ssid", "");
+  cfg.pass       = prefs.getString("pass", "");
+  cfg.apiBase    = prefs.getString("apiBase", "darlingprinter.onrender.com/api/v1");
   cfg.deviceId   = prefs.getString("devId", "Siona");
   cfg.apiKey     = prefs.getString("apiKey", "2a92edb35301dbc4149c09af563ec95c1f456c0f07ec2f20");
-  cfg.bleMac     = prefs.getString("bleMac", "");
-  cfg.bleSvc     = prefs.getString("bleSvc", "");
-  cfg.bleChar    = prefs.getString("bleChar", "");
+  cfg.bleMac     = prefs.getString("bleMac", "03:4f:3b:05:83:df");
+  cfg.bleSvc     = prefs.getString("bleSvc", "49535343-fe7d-4ae5-8fa9-9fafd205e455");
+  cfg.bleChar    = prefs.getString("bleChar", "49535343-8841-43f4-a8d4-ecbe34729bb3");
   cfg.pollSeconds = prefs.getInt("pollSec", 5);
+
+
   prefs.end();
+
+
+  Serial.println("========== PREFS ==========");
+    Serial.printf("SSID:        %s\n", cfg.ssid.c_str());
+    Serial.printf("Password:    %s\n", cfg.pass.c_str());
+    Serial.printf("API Base:    %s\n", cfg.apiBase.c_str());
+    Serial.printf("Device ID:   %s\n", cfg.deviceId.c_str());
+    Serial.printf("API Key:     %s\n", cfg.apiKey.c_str());
+    Serial.printf("BLE MAC:     %s\n", cfg.bleMac.c_str());
+    Serial.printf("BLE Service: %s\n", cfg.bleSvc.c_str());
+    Serial.printf("BLE Char:    %s\n", cfg.bleChar.c_str());
+    Serial.printf("Poll Sec:    %d\n", cfg.pollSeconds);
+    Serial.println("============================");
 }
 
 void saveNetworkConfig(const String &ssid, const String &pass, const String &apiBase,
@@ -375,11 +390,28 @@ void pollCloudIfDue() {
   }
 
   String url = cfg.apiBase + "/api/device/next-job";
+
+  Serial.print("[cloud] GET ");
+  Serial.println(url);
+
   HTTPClient http;
   WiFiClientSecure secureClient;
   if (!httpBeginAuto(http, secureClient, url)) { lastPollStatus = "http.begin failed"; return; }
   http.addHeader("X-Device-Id", cfg.deviceId);
   http.addHeader("X-Api-Key", cfg.apiKey);
+
+
+  WiFiClient testClient;
+
+  Serial.printf("[cloud] TCP test %s:3000...\n", "192.168.1.152");
+
+  if (testClient.connect("192.168.1.152", 3000)) {
+      Serial.println("[cloud] TCP OK");
+      testClient.stop();
+  } else {
+      Serial.println("[cloud] TCP FAILED");
+  }
+
   int code = http.GET();
 
   if (code == 204) { http.end(); lastPollStatus = "queue empty"; return; }
@@ -950,52 +982,78 @@ void setupRoutes() {
 
 void setup() {
 
-  //prefs.begin("ctp500", false);
-  //prefs.clear();
-  //prefs.end();
+  prefs.begin("ctp500", false);
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.end();
 
 
-  Serial.begin(115200);
-  delay(300);
-  Serial.println("\nStarting CTP500 cloud bridge...");
 
-  initBase64Table();
-  loadConfig();
+    Serial.begin(115200);
+    delay(300);
+    Serial.println("\nStarting CTP500 cloud bridge...");
 
-  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
-  bool forceSetup = (digitalRead(BOOT_BUTTON_PIN) == LOW);
+    initBase64Table();
+    loadConfig();
 
-  //WiFi.setSleep(false); // power-save mode fights with BLE coexistence
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+    bool forceSetup = (digitalRead(BOOT_BUTTON_PIN) == LOW);
 
-  if (cfg.ssid.length() == 0 || forceSetup) {
-    if (forceSetup) Serial.println("[setup] BOOT button held - forcing setup mode");
-    startApMode();
-  } else if (!connectStaWithTimeout(STA_CONNECT_TIMEOUT_MS)) {
-    Serial.println("[wifi] Connect failed - falling back to setup mode");
-    startApMode();
-  } else {
-    Serial.print("[wifi] Connected. IP: ");
-    Serial.println(WiFi.localIP());
-  }
+    WiFi.setSleep(false);
 
-  // BLE brought up AFTER WiFi resolves, not before - initializing both
-  // radios at once on the C6's single shared 2.4GHz radio can disrupt
-  // the WPA handshake/DHCP timing badly enough to make STA connects
-  // fail outright.
-  NimBLEDevice::init("XIAO-CTP500-Bridge");
+    // -------------------------------------------------------------
+    // WiFi setup
+    // -------------------------------------------------------------
+    if (cfg.ssid.length() == 0 || forceSetup) {
+        if (forceSetup) {
+            Serial.println("[setup] BOOT button held - forcing setup mode");
+        }
 
-  setupRoutes();
-  server.begin();
-  lastPollMs = millis();
-  Serial.println("Web server started.");
+        startApMode();
+
+    } else if (!connectStaWithTimeout(STA_CONNECT_TIMEOUT_MS)) {
+        Serial.println("[wifi] Connect failed - falling back to setup mode");
+        startApMode();
+
+    } else {
+        Serial.print("[wifi] Connected. IP: ");
+        Serial.println(WiFi.localIP());
+    }
+
+    // -------------------------------------------------------------
+    // BLE
+    // -------------------------------------------------------------
+    NimBLEDevice::init("XIAO-CTP500-Bridge");
+
+    // -------------------------------------------------------------
+    // Web server
+    // -------------------------------------------------------------
+    setupRoutes();
+    server.begin();
+
+    lastPollMs = millis();
+
+    Serial.println("Web server started.");
+
+    if (!apModeActive && WiFi.status() == WL_CONNECTED) {
+        if (cfg.bleMac.length() == 0 ||
+            cfg.bleSvc.length() == 0 ||
+            cfg.bleChar.length() == 0) {
+
+            Serial.println("[setup] WiFi configured, but BLE is not configured.");
+            Serial.print("[setup] Configure BLE at http://");
+            Serial.print(WiFi.localIP());
+            Serial.println("/");
+        }
+    }
 }
 
 void loop() {
-  if (apModeActive) dnsServer.processNextRequest();
-  server.handleClient();
+    if (apModeActive) dnsServer.processNextRequest();
+    server.handleClient();
 
-  if (!apModeActive && WiFi.status() == WL_CONNECTED) {
-    maintainBleConnection();
-    pollCloudIfDue();
-  }
+    if (!apModeActive && WiFi.status() == WL_CONNECTED) {
+        maintainBleConnection();
+        pollCloudIfDue();
+    }
 }

@@ -134,4 +134,7 @@ app.post('/api/device/jobs/:id/ack', requireDevice, (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CTP500 cloud server listening on :${PORT}`));
+
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`CTP500 cloud server listening on :${PORT}`);
+});
