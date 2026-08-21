@@ -63,7 +63,7 @@ void loadConfig() {
   prefs.begin("ctp500", true);
   cfg.ssid       = prefs.getString("ssid", "");
   cfg.pass       = prefs.getString("pass", "");
-  cfg.apiBase    = prefs.getString("apiBase", "darlingprinter.onrender.com/api/v1");
+  cfg.apiBase    = prefs.getString("apiBase", "darlingprinter.onrender.com");
   cfg.deviceId   = prefs.getString("devId", "Siona");
   cfg.apiKey     = prefs.getString("apiKey", "2a92edb35301dbc4149c09af563ec95c1f456c0f07ec2f20");
   cfg.bleMac     = prefs.getString("bleMac", "03:4f:3b:05:83:df");
